@@ -64,3 +64,55 @@ export interface WifiStatus {
   ip?: string;
   networks?: RawWifiNetwork[];
 }
+
+// ==========================================
+// NHIỀU ĐÈN QUA ESP-NOW (firmware CitoLedMesh, characteristic MESH …0006)
+// Firmware cũ CitoLedSmart không có characteristic này -> meshSupported = false
+// ==========================================
+
+// Trạng thái xác nhận lệnh gần nhất của một đèn
+export type MeshAck = 0 | 1 | 2 | 3; // 0 = chưa gửi, 1 = đã xác nhận, 2 = đang chờ, 3 = không trả lời
+
+export interface MeshLamp {
+  id: string; // 6 ký tự cuối MAC, ví dụ "A1B2C3"
+  name: string; // Tên gợi nhớ (có thể rỗng)
+  group: number; // 0 = chưa vào nhóm, 1..8
+  online: number; // 0 / 1
+  power: number;
+  r: number;
+  g: number;
+  b: number;
+  cw: number;
+  bri: number;
+  tempC: number | null;
+  rssi: number; // dBm, 0 = không rõ
+  ack: MeshAck;
+  isGateway: number; // 1 = đèn đang kết nối BLE với điện thoại
+  hops: number; // 0 = nghe trực tiếp, 1 = qua đèn chuyển tiếp
+  tvalid: number;
+  fw: number;
+  fanDuty: number;
+  ackAt?: number; // Date.now() lúc ack chuyển sang 1 (để ẩn dấu ✓ sau vài giây)
+}
+
+// Phần tổng quan khi READ characteristic MESH (thông tin của đèn cổng)
+export interface MeshInfo {
+  v: number;
+  self: string;
+  name: string;
+  grp: number;
+  net: number;
+  ch: number;
+  relay: number;
+  irf: number;
+  mode: string;
+  total: number;
+  online: number;
+}
+
+// Đích điều khiển hiện tại
+export type ControlTarget =
+  | { kind: 'self' } // chỉ đèn đang kết nối - đi đường RX như firmware cũ
+  | { kind: 'all' }
+  | { kind: 'group'; group: number }
+  | { kind: 'lamps'; ids: string[] };
