@@ -102,3 +102,33 @@
    ```bash
    npm run build
    ```
+
+---
+
+## 🌐 Deploy Lên GitHub Pages
+
+Dự án đã được tích hợp sẵn GitHub Actions workflow (`.github/workflows/deploy.yml`) để tự động đóng gói và xuất bản ứng dụng lên GitHub Pages.
+
+### Các bước thiết lập trên GitHub:
+
+1. **Bật GitHub Pages với Source là GitHub Actions**:
+   - Truy cập vào Repository của bạn trên GitHub.
+   - Chọn tab **Settings** (Cài đặt) ➔ mục **Pages** ở thanh menu bên trái.
+   - Tại mục **Build and deployment** ➔ **Source**, chọn **GitHub Actions** (không chọn Deploy from a branch).
+
+2. **Kích hoạt Deploy**:
+   - Mỗi khi bạn `push` hoặc merge code vào nhánh `main`, workflow `Deploy Cito Smart Light to GitHub Pages` sẽ tự động kích hoạt, kiểm tra lỗi cú pháp/kiểu dữ liệu (`npm run lint`), build dự án (`npm run build`) và deploy thư mục `./dist` lên GitHub Pages.
+   - Bạn cũng có thể kích hoạt thủ công bất cứ lúc nào tại tab **Actions** ➔ chọn workflow **Deploy Cito Smart Light to GitHub Pages** ➔ nhấn **Run workflow**.
+
+3. **Địa chỉ truy cập Web App**:
+   - Sau khi workflow hoàn tất, đường dẫn trang web sẽ có định dạng:
+     ```text
+     https://<username>.github.io/<repo-name>/
+     ```
+
+### ⚠️ Lưu ý quan trọng về Web Bluetooth:
+- **Yêu cầu HTTPS**: Web Bluetooth API bắt buộc phải chạy trên kết nối bảo mật **HTTPS** (hoặc `localhost` khi phát triển). GitHub Pages mặc định cung cấp sẵn HTTPS miễn phí và hợp lệ.
+- **Trình duyệt hỗ trợ**:
+  - **Windows, macOS, Linux, Android**: Hỗ trợ tốt trên **Google Chrome**, **Microsoft Edge**, Opera hoặc các trình duyệt nhân Chromium.
+  - **iOS / iPadOS (iPhone, iPad)**: Trình duyệt **Safari trên iOS không hỗ trợ Web Bluetooth API**. Để kết nối và điều khiển đèn trên iPhone/iPad, vui lòng cài đặt ứng dụng **Bluefy - Web BLE Browser** (miễn phí từ Apple App Store) và mở liên kết GitHub Pages trong ứng dụng Bluefy.
+

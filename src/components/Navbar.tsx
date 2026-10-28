@@ -76,26 +76,38 @@ export function Navbar({
   };
 
   return (
-    <header className="sticky top-0 z-30 w-full backdrop-blur-xl bg-white/70 dark:bg-[#07090e]/75 border-b border-zinc-200/70 dark:border-white/[0.08] transition-colors shadow-sm">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+    <header className="sticky top-0 z-30 w-full backdrop-blur-xl bg-white/80 dark:bg-[#07090e]/80 border-b border-zinc-200/80 dark:border-white/[0.08] transition-colors shadow-sm">
+      <div className="max-w-6xl mx-auto px-3.5 sm:px-6 h-17 sm:h-20 flex items-center justify-between">
         {/* Logo & Tên App */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-indigo-600 p-[1.5px] flex items-center justify-center shadow-md shadow-cyan-500/10">
-            <div className="w-full h-full bg-zinc-950/90 backdrop-blur-sm rounded-[10px] flex items-center justify-center">
-              <Bluetooth className="w-5 h-5 text-cyan-400" />
+        <div className="flex items-center gap-2.5 sm:gap-3.5">
+          <div className="relative group">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-cyan-500 via-sky-500 to-indigo-600 p-[1.5px] flex items-center justify-center shadow-lg shadow-cyan-500/20 group-hover:shadow-cyan-500/35 transition-all">
+              <div className="w-full h-full bg-zinc-950/90 dark:bg-zinc-900/90 backdrop-blur-sm rounded-[14px] flex items-center justify-center">
+                <Bluetooth className="w-5 h-5 sm:w-6 sm:h-6 text-cyan-400 group-hover:scale-110 transition-transform" />
+              </div>
             </div>
+            {/* Vòng sáng nhẹ uyển chuyển */}
+            <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 opacity-20 blur-sm pointer-events-none -z-10 group-hover:opacity-40 transition-opacity"></div>
           </div>
-          <div>
+
+          <div className="flex flex-col justify-center">
             <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100 font-mono">
-                Cito <span className="text-cyan-500 dark:text-cyan-400">Smart Light</span>
+              <h1 className="font-brand text-xl sm:text-2xl md:text-[1.7rem] font-black tracking-tight leading-none drop-shadow-[0_2px_12px_rgba(6,182,212,0.15)] dark:drop-shadow-[0_2px_16px_rgba(34,211,238,0.25)] flex items-center">
+                <span className="text-zinc-900 dark:text-white font-extrabold tracking-tight mr-1.5 sm:mr-2">
+                  Cito
+                </span>
+                <span className="bg-gradient-to-r from-cyan-500 via-sky-400 to-blue-600 dark:from-cyan-300 dark:via-teal-200 dark:to-sky-400 bg-clip-text text-transparent font-extrabold tracking-tight">
+                  Smart Light
+                </span>
+                <span className="inline-block w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full bg-cyan-400 dark:bg-cyan-300 shadow-[0_0_10px_rgba(34,211,238,0.85)] animate-pulse ml-1.5"></span>
               </h1>
-              <span className="hidden sm:inline-block text-[10px] uppercase font-mono tracking-widest px-2 py-0.5 rounded-full backdrop-blur-md bg-zinc-100/90 dark:bg-white/[0.06] text-zinc-500 dark:text-zinc-400 border border-zinc-200/80 dark:border-white/[0.08]">
+              <span className="hidden md:inline-flex items-center text-[10px] font-semibold tracking-wider uppercase px-2.5 py-0.5 rounded-full backdrop-blur-md bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border border-cyan-500/25 shadow-xs">
                 BLE & Wi-Fi
               </span>
             </div>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 hidden xs:block">
-              Điều khiển đèn thông minh & Lập lịch
+            <p className="text-[11px] sm:text-xs font-medium text-zinc-500 dark:text-zinc-400 tracking-wide flex items-center gap-1.5 mt-1">
+              <span className="hidden xs:inline-block w-1.5 h-1.5 rounded-full bg-emerald-500/80"></span>
+              <span>Điều khiển đèn thông minh & Lập lịch quang chu kỳ</span>
             </p>
           </div>
         </div>

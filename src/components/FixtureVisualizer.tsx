@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { Power, Sparkles, Camera, Eye, Zap, Thermometer, Wind } from 'lucide-react';
+import { Power, Sparkles, Zap, Thermometer, Wind } from 'lucide-react';
 import { getFixtureColorCSS } from '../utils/colorUtils';
 
 interface FixtureVisualizerProps {
@@ -27,9 +26,6 @@ export function FixtureVisualizer({
 }: FixtureVisualizerProps) {
   const isLampOn = power === 1 && bri > 0;
   const { cssColor, cssGlow, hex, intensityPercent } = getFixtureColorCSS(r, g, b, cw, bri, power);
-
-  // Chế độ xem: 'model' (Mô phỏng 3D Đèn Tròn CNC) hoặc 'photo' (Ảnh Đèn Thực Tế Có Ánh Sáng)
-  const [viewMode, setViewMode] = useState<'model' | 'photo'>('model');
 
   // Tính toán 32 lỗ tản nhiệt CNC và 4 ốc vít định vị chuẩn theo ảnh đèn thực tế
   // 4 ốc ở các góc lệch ~25°, 115°, 205°, 295°
@@ -121,36 +117,6 @@ export function FixtureVisualizer({
         </div>
 
         <div className="flex items-center gap-2 ml-auto">
-          {/* Nút chuyển chế độ: Đèn CNC 3D / Ảnh Chụp Thực Tế */}
-          <div className="flex items-center p-0.5 rounded-xl bg-zinc-100 dark:bg-zinc-800/80 border border-zinc-200/80 dark:border-zinc-700/60 text-xs">
-            <button
-              type="button"
-              onClick={() => setViewMode('model')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium text-[11px] transition-all cursor-pointer ${
-                viewMode === 'model'
-                  ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-xs font-semibold'
-                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
-              }`}
-              title="Mô phỏng đồ họa đèn tròn nhôm CNC"
-            >
-              <Eye className="w-3 h-3" />
-              <span>Đèn CNC</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('photo')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium text-[11px] transition-all cursor-pointer ${
-                viewMode === 'photo'
-                  ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-xs font-semibold'
-                  : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
-              }`}
-              title="Xem ảnh chụp thực tế kèm quầng sáng phát quang"
-            >
-              <Camera className="w-3 h-3" />
-              <span>Ảnh Thật</span>
-            </button>
-          </div>
-
           {/* Nút bật/tắt nhanh */}
           {onTogglePower && (
             <button
@@ -186,11 +152,8 @@ export function FixtureVisualizer({
           />
         )}
 
-        {/* ============================================================== */}
-        {/* CHẾ ĐỘ 1: MÔ PHỎNG ĐÈN TRÒN NHÔM CNC (CHI TIẾT CHUẨN ĐỒ HỌA)   */}
-        {/* ============================================================== */}
-        {viewMode === 'model' && (
-          <div className="relative z-10 flex flex-col items-center w-full max-w-sm mx-auto">
+        {/* MÔ PHỎNG ĐÈN TRÒN NHÔM CNC (CHI TIẾT CHUẨN ĐỒ HỌA) */}
+        <div className="relative z-10 flex flex-col items-center w-full max-w-sm mx-auto">
             {/* THÂN ĐÈN TRÒN CNC */}
             <div className="relative w-56 h-56 sm:w-60 sm:h-60 rounded-full flex items-center justify-center transition-transform duration-300">
               {/* Bóng đổ vật lý và vầng sáng phía sau */}
@@ -381,121 +344,6 @@ export function FixtureVisualizer({
               )}
             </div>
           </div>
-        )}
-
-        {/* ============================================================== */}
-        {/* CHẾ ĐỘ 2: ẢNH ĐÈN THỰC TẾ LỒNG GHÉP QUẦNG SÁNG QUANG HỌC       */}
-        {/* ============================================================== */}
-        {viewMode === 'photo' && (
-          <div className="relative z-10 flex flex-col items-center max-w-sm mx-auto">
-            <div className="relative rounded-2xl overflow-hidden border border-zinc-700/80 shadow-2xl bg-black">
-              {/* Ảnh chụp đèn thực tế của người dùng */}
-              <img
-                src="/assets/aistudio/image_e2122122.png"
-                alt="Đèn nhôm CNC thực tế"
-                className="w-72 sm:w-80 h-auto object-cover block"
-              />
-
-              {/* Lớp quang học phủ phát sáng chuẩn xác lên mặt kính của đèn thật */}
-              {isLampOn && (
-                <div className="absolute inset-0 pointer-events-none">
-                  <svg
-                    viewBox="0 0 335 267"
-                    className="w-full h-full"
-                    preserveAspectRatio="none"
-                  >
-                    <defs>
-                      {/* Quầng sáng xuyên tâm mặt kính */}
-                      <radialGradient id="realLensGlow" cx="50%" cy="50%" r="50%">
-                        <stop
-                          offset="0%"
-                          stopColor={cssColor}
-                          stopOpacity={Math.min(0.95, (bri / 100) * 1.1)}
-                        />
-                        <stop
-                          offset="65%"
-                          stopColor={cssColor}
-                          stopOpacity={Math.min(0.85, (bri / 100) * 0.9)}
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor={cssColor}
-                          stopOpacity={Math.min(0.65, (bri / 100) * 0.5)}
-                        />
-                      </radialGradient>
-
-                      {/* Quầng ánh sáng tràn viền mềm mại */}
-                      <filter id="bloomSpread" x="-40%" y="-40%" width="180%" height="180%">
-                        <feGaussianBlur stdDeviation="12" />
-                      </filter>
-                    </defs>
-
-                    {/* Vầng sáng tràn ra ngoài viền nhôm và phản xạ lên tay người cầm */}
-                    <ellipse
-                      cx="151"
-                      cy="125"
-                      rx="125"
-                      ry="125"
-                      fill={cssColor}
-                      opacity={Math.min(0.5, (bri / 100) * 0.6)}
-                      filter="url(#bloomSpread)"
-                      style={{ mixBlendMode: 'screen' }}
-                    />
-
-                    {/* Lớp phủ sáng chính ngay trên mặt kính khuếch tán */}
-                    <ellipse
-                      cx="151"
-                      cy="125"
-                      rx="86"
-                      ry="86"
-                      fill="url(#realLensGlow)"
-                      style={{ mixBlendMode: 'screen' }}
-                    />
-
-                    {/* Lớp gia tăng độ rực rỡ màu sắc thực tế */}
-                    <ellipse
-                      cx="151"
-                      cy="125"
-                      rx="84"
-                      ry="84"
-                      fill={cssColor}
-                      opacity={Math.min(0.8, (bri / 100) * 0.85)}
-                      style={{ mixBlendMode: 'color-dodge' }}
-                    />
-
-                    {/* Tâm sáng rực trung tâm chùm LED */}
-                    <ellipse
-                      cx="151"
-                      cy="125"
-                      rx="45"
-                      ry="45"
-                      fill="#ffffff"
-                      opacity={Math.min(0.7, (bri / 100) * 0.75)}
-                      style={{ mixBlendMode: 'overlay' }}
-                    />
-                  </svg>
-                </div>
-              )}
-
-              {/* Nhãn chú thích góc dưới */}
-              <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between px-2.5 py-1 rounded-lg backdrop-blur-md bg-black/60 border border-white/10 text-[10px] text-zinc-300 font-mono">
-                <span className="flex items-center gap-1">
-                  <Camera className="w-3 h-3 text-amber-400" />
-                  Ảnh thiết bị thực tế
-                </span>
-                <span className="text-zinc-400">
-                  {isLampOn ? `Phát sáng: ${bri}%` : 'Đèn đang tắt'}
-                </span>
-              </div>
-            </div>
-
-            <p className="mt-2 text-[11px] text-zinc-400 text-center font-medium">
-              {isLampOn
-                ? `Đèn thật đang phát quang phổ màu ${hex} với độ sáng ${bri}%`
-                : 'Đèn thật ở trạng thái chờ (Tắt)'}
-            </p>
-          </div>
-        )}
       </div>
 
       {/* THANH THỐNG SỐ CHI TIẾT DƯỚI CÙNG */}
