@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer utilities {
+  .glass-panel {
+    @apply backdrop-blur-xl bg-white/75 dark:bg-zinc-900/60 border border-zinc-200/80 dark:border-white/[0.08] shadow-lg shadow-zinc-900/5 dark:shadow-2xl dark:shadow-black/40;
+  }
+  .glass-card {
+    @apply backdrop-blur-lg bg-zinc-50/80 dark:bg-zinc-950/40 border border-zinc-200/70 dark:border-white/[0.06];
+  }
+  .glass-button {
+    @apply backdrop-blur-md bg-zinc-100/90 hover:bg-zinc-200/90 dark:bg-white/[0.07] dark:hover:bg-white/[0.12] text-zinc-700 dark:text-zinc-200 border border-zinc-200/80 dark:border-white/[0.08] transition-all;
+  }
+  .glass-input {
+    @apply backdrop-blur-md bg-white/90 dark:bg-zinc-900/80 text-zinc-900 dark:text-zinc-100 border border-zinc-200 dark:border-white/[0.1] focus:border-cyan-500/80 focus:ring-1 focus:ring-cyan-500/50;
+  }
+  .glass-pill {
+    @apply backdrop-blur-md bg-zinc-100/80 dark:bg-white/[0.05] border border-zinc-200/60 dark:border-white/[0.08];
+  }
+}

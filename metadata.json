@@ -1,0 +1,8 @@
+{
+  "name": "Cito Smart Light",
+  "description": "Ứng dụng điều khiển đèn thông minh Cito Smart Light qua Bluetooth Low Energy (BLE) và Wi-Fi, hỗ trợ đặt lịch hẹn giờ và quản lý mạng.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
