@@ -33,6 +33,15 @@
 - **Bảng Điều Khiển Lệnh Thô (Live Console)**:
   - Theo dõi nhật ký truyền nhận dữ liệu BLE 2 chiều (TX/RX).
   - Gửi các gói lệnh chuỗi thô để chẩn đoán và kiểm thử.
+  - Gõ `mesh: to=all&power=0` để ghi thẳng vào kênh MESH (firmware CitoLedMesh).
+
+- **Điều Khiển Nhiều Đèn (firmware CitoLedMesh)**:
+  - Điện thoại kết nối BLE với **một** đèn bất kỳ ("đèn cổng"). Đèn này chuyển lệnh qua ESP-NOW cho các đèn còn lại.
+  - Chọn đích điều khiển: **Đèn này / Tất cả / Theo nhóm / Chọn tay từng đèn**. Slider và nút nguồn áp dụng cho đích đã chọn.
+  - Danh sách đèn hiện trạng thái, nhiệt độ, sóng và xác nhận lệnh (✓ / ⚠ không phản hồi) của từng đèn.
+  - Đổi tên, gán nhóm (1–8), nháy để nhận diện đèn; tên nhóm lưu trên trình duyệt.
+  - Chép lịch hẹn giờ của đèn cổng sang cả nhóm hoặc tất cả đèn.
+  - **Tương thích ngược:** đèn dùng firmware cũ **CitoLedSmart** (không có characteristic `…0006`) thì web tự ẩn phần nhiều đèn, mọi thứ khác chạy như trước.
 
 ---
 
@@ -45,6 +54,9 @@
 | **Notify / Telemetry** | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` | `NOTIFY` / `READ` | Đèn phản hồi nhiệt độ và tốc độ quạt |
 | **Schedule Config** | `6e400004-b5a3-f393-e0a9-e50e24dcca9e` | `WRITE`, `READ`, `NOTIFY` | Đồng bộ cấu hình lịch hẹn giờ |
 | **Wi-Fi Config** | `6e400005-b5a3-f393-e0a9-e50e24dcca9e` | `WRITE`, `READ`, `NOTIFY` | Quét mạng Wi-Fi và truyền thông tin kết nối |
+| **Mesh** *(chỉ CitoLedMesh)* | `6e400006-b5a3-f393-e0a9-e50e24dcca9e` | `WRITE`, `READ`, `NOTIFY` | Điều khiển nhiều đèn qua ESP-NOW: `to=all\|g<N>\|<ID>,…&power=…`, đọc danh sách đèn theo trang |
+
+> **Thử giao diện không cần đèn:** mở web với `?mock=1` (giả lập firmware mới, 4 đèn) hoặc `?mock=old` (giả lập firmware cũ), rồi bấm **Kết Nối**.
 
 ### Định Dạng Dữ Liệu Truyền Nhận
 
