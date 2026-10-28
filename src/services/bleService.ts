@@ -5,20 +5,32 @@ import {
   ScheduleData,
   ScheduleSlot,
   WifiStatus,
+  MeshLamp,
+  MeshInfo,
+  MeshAck,
+  ControlTarget,
 } from '../types';
+import { sanitizeLampName, targetIncludesLamp } from '../utils/meshUtils';
 
 export const CITO_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 export const CITO_WRITE_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 export const CITO_NOTIFY_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 export const CITO_SCHED_CHAR_UUID = '6e400004-b5a3-f393-e0a9-e50e24dcca9e';
 export const CITO_WIFI_CHAR_UUID = '6e400005-b5a3-f393-e0a9-e50e24dcca9e';
+// Chỉ có ở firmware CitoLedMesh - điều khiển nhiều đèn qua ESP-NOW
+export const CITO_MESH_CHAR_UUID = '6e400006-b5a3-f393-e0a9-e50e24dcca9e';
 export const CITO_DEVICE_NAME = 'CitoLedSmart';
+
+// Firmware giới hạn mỗi lệnh ESP-NOW ~235 byte
+const MESH_MAX_CMD_BYTES = 230;
+const MESH_POLL_MS = 15000;
 
 type StatusCallback = (state: Partial<LedState>) => void;
 type ConnectionCallback = (status: ConnectionStatus, errorMsg?: string) => void;
 type LogCallback = (log: BleLogEntry) => void;
 type ScheduleCallback = (data: ScheduleData) => void;
 type WifiCallback = (status: WifiStatus) => void;
+type MeshCallback = (supported: boolean, info: MeshInfo | null, lamps: MeshLamp[]) => void;
 
 export class BleService {
   private device: BluetoothDevice | null = null;
@@ -27,12 +39,24 @@ export class BleService {
   private notifyCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
   private schedCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
   private wifiCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
+  private meshCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
 
   private onStatusCallback: StatusCallback | null = null;
   private onConnectionCallback: ConnectionCallback | null = null;
   private onLogCallback: LogCallback | null = null;
   private onScheduleCallback: ScheduleCallback | null = null;
   private onWifiCallback: WifiCallback | null = null;
+  private onMeshCallback: MeshCallback | null = null;
+
+  // --- Nhiều đèn (MESH) ---
+  public meshSupported: boolean = false;
+  private meshInfo: MeshInfo | null = null;
+  private meshLamps: Map<string, MeshLamp> = new Map();
+  private meshRxBuffer: string = '';
+  private meshPollTimer: number | null = null;
+  private meshReading: boolean = false;
+  private target: ControlTarget = { kind: 'self' };
+  private mockLegacy: boolean = false;
 
   private rxBuffer: string = '';
   private writeQueue: Promise<void> = Promise.resolve();
@@ -107,6 +131,10 @@ export class BleService {
     if (onWifi) this.onWifiCallback = onWifi;
   }
 
+  public setMeshCallback(onMesh: MeshCallback) {
+    this.onMeshCallback = onMesh;
+  }
+
   public isBluetoothSupported(): boolean {
     return typeof navigator !== 'undefined' && Boolean(navigator.bluetooth);
   }
@@ -145,6 +173,7 @@ export class BleService {
         CITO_NOTIFY_CHAR_UUID,
         CITO_SCHED_CHAR_UUID,
         CITO_WIFI_CHAR_UUID,
+        CITO_MESH_CHAR_UUID,
         '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
         '00001801-0000-1000-8000-00805f9b34fb', // Generic Attribute
         '0000180a-0000-1000-8000-00805f9b34fb', // Device Info
@@ -248,8 +277,34 @@ export class BleService {
         this.log('info', `Kênh WIFI không khả dụng: ${e.message}`);
       }
 
+      // 5. Mesh characteristic (nhiều đèn) - CHỈ có ở firmware CitoLedMesh.
+      //    Firmware cũ không có -> giữ nguyên hành vi một đèn, không báo lỗi.
+      try {
+        const meshChar = await service.getCharacteristic(CITO_MESH_CHAR_UUID);
+        await meshChar.startNotifications();
+        meshChar.addEventListener('characteristicvaluechanged', this.handleMeshNotification);
+        this.meshCharacteristic = meshChar;
+        this.meshSupported = true;
+        this.log('info', 'Đèn hỗ trợ điều khiển nhiều đèn (MESH).');
+      } catch {
+        this.meshCharacteristic = null;
+        this.meshSupported = false;
+        this.log('info', 'Firmware đèn không có kênh MESH - chỉ điều khiển riêng đèn này.');
+      }
+      this.emitMesh();
+
       this.onConnectionCallback?.('connected');
       this.log('info', 'Kết nối thành công với Cito Smart Light!');
+
+      if (this.meshSupported) {
+        setTimeout(() => {
+          this.readMeshList();
+        }, 700);
+        if (this.meshPollTimer) clearInterval(this.meshPollTimer);
+        this.meshPollTimer = window.setInterval(() => {
+          this.readMeshList();
+        }, MESH_POLL_MS);
+      }
 
       // Tự động đồng bộ thời gian từ điện thoại xuống đèn ngay sau khi kết nối
       setTimeout(() => {
@@ -293,6 +348,18 @@ export class BleService {
         }
       }
 
+      if (this.meshCharacteristic) {
+        try {
+          await this.meshCharacteristic.stopNotifications();
+          this.meshCharacteristic.removeEventListener(
+            'characteristicvaluechanged',
+            this.handleMeshNotification
+          );
+        } catch {
+          // ignore
+        }
+      }
+
       if (this.device && this.device.gatt?.connected) {
         this.device.gatt.disconnect();
       }
@@ -329,6 +396,22 @@ export class BleService {
       clearInterval(this.wifiPollTimer);
       this.wifiPollTimer = null;
     }
+    this.resetMesh();
+  }
+
+  private resetMesh() {
+    this.meshCharacteristic = null;
+    this.meshSupported = false;
+    this.meshInfo = null;
+    this.meshLamps.clear();
+    this.meshRxBuffer = '';
+    this.meshReading = false;
+    this.target = { kind: 'self' };
+    if (this.meshPollTimer) {
+      clearInterval(this.meshPollTimer);
+      this.meshPollTimer = null;
+    }
+    this.emitMesh();
   }
 
   private handleNotification = (event: Event) => {
@@ -401,8 +484,15 @@ export class BleService {
    * Gửi các thay đổi kênh màu / độ sáng (số nguyên) qua BLE GATT Write
    */
   public sendChanges(changes: Partial<LedState>, immediate = false): void {
+    // Cập nhật ngay danh sách đèn trên màn hình (không chờ đèn báo lại)
+    this.applyOptimisticToTargets(changes);
+
     if (this.isMockMode) {
-      this.sendMockChanges(changes);
+      if (this.mockTargetsGateway()) this.sendMockChanges(changes);
+      if (this.resolveTargetString() !== null) {
+        this.log('tx', `[Mô phỏng MESH]: to=${this.resolveTargetString()}&${this.changesToQuery(changes)}`);
+        this.simulateMockAcks();
+      }
       return;
     }
 
@@ -476,7 +566,357 @@ export class BleService {
     if (parts.length === 0) return;
     const commandText = parts.join('&');
 
-    this.queueWrite(this.writeCharacteristic, commandText);
+    // Đích là riêng đèn đang kết nối (hoặc firmware cũ) -> đường RX y như cũ.
+    // Còn lại -> kênh MESH kèm "to=" để đèn cổng chuyển qua ESP-NOW.
+    const to = this.resolveTargetString();
+    if (to === null || !this.meshCharacteristic) {
+      this.queueWrite(this.writeCharacteristic, commandText);
+    } else {
+      this.sendMeshTo(to, commandText);
+    }
+  }
+
+  private changesToQuery(changes: Partial<LedState>): string {
+    const parts: string[] = [];
+    (['power', 'r', 'g', 'b', 'cw', 'bri', 'gamma'] as const).forEach((k) => {
+      const v = changes[k];
+      if (v !== undefined) parts.push(`${k}=${Math.round(v)}`);
+    });
+    return parts.join('&');
+  }
+
+  // ==========================================
+  // NHIỀU ĐÈN (MESH)
+  // ==========================================
+
+  public getTarget(): ControlTarget {
+    return this.target;
+  }
+
+  /**
+   * Đổi đích điều khiển. Gửi nốt thay đổi đang chờ cho đích cũ, rồi xoá
+   * lastSentState - nếu không, giá trị trùng lần gửi trước (cho đích khác)
+   * sẽ bị bỏ qua, không gửi tới đích mới.
+   */
+  public setTarget(target: ControlTarget) {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+      if (!this.isMockMode) this.flushPendingWrites();
+    }
+    this.pendingChanges = {};
+    this.lastSentState = {};
+    this.target = target;
+  }
+
+  /** null = chỉ đèn cổng (đi đường RX) */
+  private resolveTargetString(): string | null {
+    if (!this.meshSupported) return null;
+    const t = this.target;
+    switch (t.kind) {
+      case 'self':
+        return null;
+      case 'all':
+        return 'all';
+      case 'group':
+        return `g${t.group}`;
+      case 'lamps': {
+        const ids = t.ids.filter(Boolean);
+        const gw = this.meshInfo?.self;
+        if (ids.length === 0) return null;
+        if (ids.length === 1 && ids[0] === gw) return null;
+        return ids.join(',');
+      }
+    }
+  }
+
+  /** Gửi lệnh tới danh sách đích; tách nhỏ nếu chuỗi vượt giới hạn của firmware */
+  private sendMeshTo(to: string, body: string) {
+    const full = `to=${to}&${body}`;
+    if (full.length <= MESH_MAX_CMD_BYTES || !to.includes(',')) {
+      this.meshWrite(full);
+      return;
+    }
+    // Chọn đúng toàn bộ đèn online -> gộp thành "all"
+    const ids = to.split(',');
+    const online = this.getMeshLamps().filter((l) => l.online === 1).map((l) => l.id);
+    if (online.length > 0 && online.every((id) => ids.includes(id))) {
+      this.meshWrite(`to=all&${body}`);
+      return;
+    }
+    let chunk: string[] = [];
+    const flush = () => {
+      if (chunk.length) this.meshWrite(`to=${chunk.join(',')}&${body}`);
+      chunk = [];
+    };
+    ids.forEach((id) => {
+      const next = `to=${[...chunk, id].join(',')}&${body}`;
+      if (next.length > MESH_MAX_CMD_BYTES) flush();
+      chunk.push(id);
+    });
+    flush();
+  }
+
+  private meshWrite(cmd: string, silent = false): Promise<void> {
+    if (this.isMockMode) {
+      if (!silent) this.log('tx', `[Mô phỏng MESH]: ${cmd}`);
+      this.applyMockMeshCommand(cmd);
+      return Promise.resolve();
+    }
+    if (!this.meshCharacteristic) {
+      this.log('error', 'Kênh MESH chưa sẵn sàng (đèn dùng firmware cũ hoặc chưa kết nối).');
+      return Promise.resolve();
+    }
+    return this.queueWrite(this.meshCharacteristic, cmd, silent);
+  }
+
+  public getMeshLamps(): MeshLamp[] {
+    const all = Array.from(this.meshLamps.values());
+    return [...all.filter((l) => l.isGateway === 1), ...all.filter((l) => l.isGateway !== 1)];
+  }
+
+  private emitMesh() {
+    this.onMeshCallback?.(this.meshSupported, this.meshInfo ? { ...this.meshInfo } : null, this.getMeshLamps());
+  }
+
+  private parseMeshLamp(a: unknown): MeshLamp | null {
+    if (!Array.isArray(a) || a.length < 14 || typeof a[0] !== 'string') return null;
+    const n = (i: number, d = 0): number => (typeof a[i] === 'number' ? (a[i] as number) : d);
+    const ack = n(12);
+    return {
+      id: (a[0] as string).toUpperCase(),
+      name: typeof a[1] === 'string' ? (a[1] as string) : '',
+      group: n(2),
+      online: n(3),
+      power: n(4),
+      r: n(5),
+      g: n(6),
+      b: n(7),
+      cw: n(8),
+      bri: n(9),
+      tempC: typeof a[10] === 'number' ? (a[10] as number) : null,
+      rssi: n(11),
+      ack: (ack >= 0 && ack <= 3 ? ack : 0) as MeshAck,
+      isGateway: n(13),
+      hops: n(14),
+      tvalid: n(15),
+      fw: n(16, 1),
+      fanDuty: n(17),
+    };
+  }
+
+  private upsertLamp(lamp: MeshLamp) {
+    const prev = this.meshLamps.get(lamp.id);
+    lamp.ackAt = lamp.ack === 1 ? (prev?.ack === 1 ? prev.ackAt : Date.now()) : undefined;
+    this.meshLamps.set(lamp.id, lamp);
+  }
+
+  private applyOptimisticToTargets(changes: Partial<LedState>) {
+    if (!this.meshSupported || this.meshLamps.size === 0) return;
+    const viaMesh = this.resolveTargetString() !== null;
+    let touched = false;
+    this.meshLamps.forEach((lamp, id) => {
+      if (lamp.online !== 1 || !targetIncludesLamp(this.target, lamp)) return;
+      const next: MeshLamp = { ...lamp };
+      (['power', 'r', 'g', 'b', 'cw', 'bri'] as const).forEach((k) => {
+        const v = changes[k];
+        if (v !== undefined) next[k] = Math.round(v);
+      });
+      if (viaMesh && lamp.isGateway !== 1) {
+        next.ack = 2;
+        next.ackAt = undefined;
+      }
+      this.meshLamps.set(id, next);
+      touched = true;
+    });
+    if (touched) this.emitMesh();
+  }
+
+  /** Đọc đủ danh sách đèn: ghi op=page&page=N rồi READ, lặp hết các trang */
+  public async readMeshList(): Promise<void> {
+    if (this.isMockMode) {
+      this.emitMesh();
+      return;
+    }
+    const ch = this.meshCharacteristic;
+    if (!ch || this.meshReading) return;
+    this.meshReading = true;
+    try {
+      const collected: MeshLamp[] = [];
+      let page = 0;
+      let pages = 1;
+      let busyRetry = 0;
+      while (page < pages && page < 30) {
+        await this.queueWrite(ch, `op=page&page=${page}`, true);
+        const text = await this.queueRead(ch);
+        if (text === null) return;
+        const data = JSON.parse(text);
+        if (data.busy) {
+          if (++busyRetry > 3) return;
+          await new Promise((r) => setTimeout(r, 200));
+          continue;
+        }
+        this.meshInfo = {
+          v: Number(data.v) || 1,
+          self: String(data.self || '').toUpperCase(),
+          name: String(data.name || ''),
+          grp: Number(data.grp) || 0,
+          net: Number(data.net) || 1,
+          ch: Number(data.ch) || 0,
+          relay: Number(data.relay) || 0,
+          irf: Number(data.irf) || 0,
+          mode: String(data.mode || ''),
+          total: Number(data.total) || 0,
+          online: Number(data.online) || 0,
+        };
+        pages = Math.max(1, Number(data.pages) || 1);
+        if (Array.isArray(data.lamps)) {
+          data.lamps.forEach((a: unknown) => {
+            const lamp = this.parseMeshLamp(a);
+            if (lamp) collected.push(lamp);
+          });
+        }
+        page++;
+      }
+      if (!this.meshCharacteristic) return; // đã ngắt kết nối giữa chừng
+      const fresh = new Map<string, MeshLamp>();
+      collected.forEach((l) => {
+        const prev = this.meshLamps.get(l.id);
+        l.ackAt = l.ack === 1 ? (prev?.ack === 1 ? prev.ackAt : Date.now()) : undefined;
+        fresh.set(l.id, l);
+      });
+      this.meshLamps = fresh;
+      this.emitMesh();
+    } catch (err: any) {
+      this.log('error', `Lỗi đọc danh sách đèn: ${err.message || err}`);
+    } finally {
+      this.meshReading = false;
+    }
+  }
+
+  private handleMeshNotification = (event: Event) => {
+    const target = event.target as BluetoothRemoteGATTCharacteristic;
+    if (!target.value) return;
+    this.meshRxBuffer += new TextDecoder('utf-8').decode(target.value);
+
+    // Tách từng object JSON hoàn chỉnh (buffer riêng, không lẫn với TX)
+    for (;;) {
+      const start = this.meshRxBuffer.indexOf('{');
+      if (start === -1) {
+        if (this.meshRxBuffer.length > 1000) this.meshRxBuffer = '';
+        return;
+      }
+      let depth = 0;
+      let end = -1;
+      let inStr = false;
+      for (let i = start; i < this.meshRxBuffer.length; i++) {
+        const c = this.meshRxBuffer[i];
+        if (inStr) {
+          if (c === '\\') i++;
+          else if (c === '"') inStr = false;
+        } else if (c === '"') inStr = true;
+        else if (c === '{') depth++;
+        else if (c === '}' && --depth === 0) {
+          end = i;
+          break;
+        }
+      }
+      if (end === -1) {
+        this.meshRxBuffer = this.meshRxBuffer.substring(start);
+        return;
+      }
+      const jsonStr = this.meshRxBuffer.substring(start, end + 1);
+      this.meshRxBuffer = this.meshRxBuffer.substring(end + 1);
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const lamp = this.parseMeshLamp(parsed.lamp);
+        if (lamp) {
+          this.log('rx', `RX Mesh: ${jsonStr}`);
+          this.upsertLamp(lamp);
+          if (lamp.isGateway === 1 && this.meshInfo) {
+            this.meshInfo = { ...this.meshInfo, name: lamp.name, grp: lamp.group };
+          }
+          this.emitMesh();
+        }
+      } catch {
+        this.log('error', `Không thể giải mã gói MESH: ${jsonStr}`);
+      }
+    }
+  };
+
+  /** Hỏi lại trạng thái cả mạng rồi đọc lại danh sách */
+  public meshPing() {
+    this.meshWrite('op=ping');
+    if (!this.isMockMode) {
+      setTimeout(() => {
+        this.readMeshList();
+      }, 1500);
+    }
+  }
+
+  private patchLamp(id: string, patch: Partial<MeshLamp>) {
+    const lamp = this.meshLamps.get(id);
+    if (!lamp) return;
+    this.meshLamps.set(id, { ...lamp, ...patch });
+    if (lamp.isGateway === 1 && this.meshInfo) {
+      this.meshInfo = {
+        ...this.meshInfo,
+        name: patch.name ?? this.meshInfo.name,
+        grp: patch.group ?? this.meshInfo.grp,
+      };
+    }
+    this.emitMesh();
+  }
+
+  public meshRename(id: string, name: string) {
+    const clean = sanitizeLampName(name);
+    this.meshWrite(`to=${id}&op=cfg&name=${clean}`);
+    this.patchLamp(id, { name: clean });
+  }
+
+  public meshSetGroup(id: string, group: number) {
+    const g = Math.max(0, Math.min(8, Math.round(group)));
+    this.meshWrite(`to=${id}&op=cfg&grp=${g}`);
+    this.patchLamp(id, { group: g });
+  }
+
+  public meshIdentify(id: string) {
+    this.meshWrite(`to=${id}&op=ident`);
+  }
+
+  /** Bật/tắt chuyển tiếp sóng hoặc "nhóm chạy theo remote" cho cả khu */
+  public meshSetAreaOption(key: 'relay' | 'irf', value: 0 | 1) {
+    this.meshWrite(`to=all&op=cfg&${key}=${value}`);
+    if (this.meshInfo) {
+      this.meshInfo = { ...this.meshInfo, [key]: value };
+      this.emitMesh();
+    }
+  }
+
+  /** Đổi mã mạng cả khu - đèn cổng tự đổi SAU CÙNG (firmware lo) */
+  public meshSetNet(net: number) {
+    const n = Math.max(1, Math.min(255, Math.round(net)));
+    this.meshWrite(`to=all&op=cfg&net=${n}`);
+    if (this.meshInfo) {
+      this.meshInfo = { ...this.meshInfo, net: n };
+      this.emitMesh();
+    }
+  }
+
+  /** Chép toàn bộ lịch (của đèn cổng) sang đích: "all" | "g<N>" | danh sách ID */
+  public async meshCopySchedule(to: string, data: ScheduleData): Promise<void> {
+    const count = Math.min(data.count || data.items.length, data.items.length);
+    this.log('info', `Đang chép ${count} mốc hẹn giờ sang "${to}"...`);
+    for (let idx = 0; idx < count; idx++) {
+      const [en, h, m, days, act, scene, r, g, b, cw, bri] = data.items[idx];
+      await this.meshWrite(
+        `to=${to}&op=sched&idx=${idx}&en=${en}&h=${h}&m=${m}&days=${days}&act=${act}&scene=${scene}` +
+          `&r=${Math.round(r)}&g=${Math.round(g)}&b=${Math.round(b)}&cw=${Math.round(cw)}&bri=${Math.round(bri)}`
+      );
+      await new Promise((res) => setTimeout(res, 80)); // để đèn cổng kịp xếp hàng
+    }
+    await this.meshWrite(`to=${to}&op=sched&on=${data.enabled ? 1 : 0}`);
+    this.log('info', `Đã gửi lịch hẹn giờ sang "${to}".`);
   }
 
   /**
@@ -522,6 +962,11 @@ export class BleService {
   }
 
   public async sendRawCommand(rawText: string): Promise<void> {
+    // "mesh: to=all&power=0" -> ghi thẳng vào kênh MESH (để thử nghiệm)
+    const meshMatch = rawText.match(/^\s*mesh:\s*(.+)$/i);
+    if (meshMatch) {
+      return this.meshWrite(meshMatch[1].trim());
+    }
     if (this.isMockMode) {
       this.log('tx', `[Mô phỏng TX]: ${rawText}`);
       this.parseAndApplyMockCommand(rawText);
@@ -532,7 +977,8 @@ export class BleService {
 
   private queueWrite(
     char: BluetoothRemoteGATTCharacteristic | null,
-    commandText: string
+    commandText: string,
+    silent: boolean = false
   ): Promise<void> {
     this.writeQueue = this.writeQueue
       .then(async () => {
@@ -544,7 +990,9 @@ export class BleService {
         const encoder = new TextEncoder();
         const data = encoder.encode(commandText);
 
-        this.log('tx', `TX: ${commandText}`);
+        if (!silent) {
+          this.log('tx', `${char === this.meshCharacteristic ? 'TX Mesh' : 'TX'}: ${commandText}`);
+        }
         await char.writeValue(data);
       })
       .catch((err) => {
@@ -552,6 +1000,22 @@ export class BleService {
       });
 
     return this.writeQueue;
+  }
+
+  // Đọc characteristic qua CÙNG hàng đợi với lệnh ghi (tránh "GATT operation already in progress")
+  private queueRead(char: BluetoothRemoteGATTCharacteristic): Promise<string | null> {
+    const result = this.writeQueue.then(async () => {
+      const value = await char.readValue();
+      return new TextDecoder('utf-8').decode(value);
+    });
+    this.writeQueue = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result.catch((err) => {
+      this.log('error', `Lỗi đọc BLE: ${err.message || err}`);
+      return null;
+    });
   }
 
   // ==========================================
@@ -750,12 +1214,142 @@ export class BleService {
   // ==========================================
   // MÔ PHỎNG VIRTUAL SIMULATOR
   // ==========================================
-  public enableMockMode(enabled: boolean) {
+  /** legacy = true: giả lập firmware cũ CitoLedSmart (không có kênh MESH) */
+  public enableMockMode(enabled: boolean, legacy: boolean = false) {
     this.isMockMode = enabled;
+    this.mockLegacy = legacy;
     if (!enabled && this.mockInterval) {
       clearInterval(this.mockInterval);
       this.mockInterval = null;
     }
+  }
+
+  private static readonly MOCK_GATEWAY_ID = 'C1A0F1';
+
+  private setupMockMesh() {
+    const base = {
+      tempC: 31.5,
+      rssi: 0,
+      ack: 0 as MeshAck,
+      isGateway: 0,
+      hops: 0,
+      tvalid: 1,
+      fw: 1,
+      fanDuty: 0,
+    };
+    const lamps: MeshLamp[] = [
+      { ...base, id: BleService.MOCK_GATEWAY_ID, name: 'Bể chính', group: 1, online: 1, power: 1, r: 80, g: 50, b: 10, cw: 0, bri: 100, isGateway: 1 },
+      { ...base, id: 'C1A0F2', name: 'Bể phụ', group: 1, online: 1, power: 1, r: 80, g: 50, b: 10, cw: 0, bri: 100, rssi: -52 },
+      { ...base, id: 'C1A0F3', name: 'Tủ cây', group: 2, online: 1, power: 1, r: 0, g: 0, b: 0, cw: 90, bri: 70, rssi: -71, hops: 0 },
+      { ...base, id: 'C1A0F4', name: '', group: 0, online: 0, power: 0, r: 0, g: 0, b: 0, cw: 0, bri: 0, rssi: -84 },
+    ];
+    this.meshLamps = new Map(lamps.map((l) => [l.id, l]));
+    this.meshInfo = {
+      v: 1,
+      self: BleService.MOCK_GATEWAY_ID,
+      name: 'Bể chính',
+      grp: 1,
+      net: 1,
+      ch: 1,
+      relay: 0,
+      irf: 0,
+      mode: 'AP',
+      total: lamps.length,
+      online: lamps.filter((l) => l.online === 1).length,
+    };
+    this.meshSupported = true;
+    this.syncMockGatewayLamp();
+    this.emitMesh();
+  }
+
+  private mockTargetsGateway(): boolean {
+    if (!this.meshSupported) return true;
+    const gw = this.meshLamps.get(BleService.MOCK_GATEWAY_ID);
+    return !gw || targetIncludesLamp(this.target, gw);
+  }
+
+  private syncMockGatewayLamp() {
+    const gw = this.meshLamps.get(BleService.MOCK_GATEWAY_ID);
+    if (!gw) return;
+    const s = this.mockState;
+    this.meshLamps.set(gw.id, {
+      ...gw,
+      power: s.power,
+      r: Math.round(s.r),
+      g: Math.round(s.g),
+      b: Math.round(s.b),
+      cw: Math.round(s.cw),
+      bri: Math.round(s.bri),
+      tempC: s.tempC ?? null,
+      fanDuty: s.fanDuty ?? 0,
+    });
+  }
+
+  // Đèn ảo "đang chờ" -> sau ~300ms xác nhận (thỉnh thoảng không trả lời để thử cảnh báo)
+  private simulateMockAcks() {
+    window.setTimeout(() => {
+      let changed = false;
+      this.meshLamps.forEach((lamp, id) => {
+        if (lamp.ack !== 2) return;
+        const fail = Math.random() < 0.1;
+        this.meshLamps.set(id, { ...lamp, ack: fail ? 3 : 1, ackAt: fail ? undefined : Date.now() });
+        changed = true;
+      });
+      if (changed) this.emitMesh();
+    }, 300);
+  }
+
+  private applyMockMeshCommand(cmd: string) {
+    const params = new URLSearchParams(cmd);
+    const to = params.get('to') || '';
+    const op = params.get('op') || 'light';
+    const tokens = to.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean);
+    const hits = (l: MeshLamp) =>
+      !to ||
+      tokens.includes('ALL') ||
+      tokens.includes(l.id) ||
+      tokens.some((t) => /^G\d$/.test(t) && l.group > 0 && Number(t.substring(1)) === l.group);
+
+    if (op === 'ping' || op === 'page') {
+      this.emitMesh();
+      return;
+    }
+    if (op === 'ident') {
+      this.log('info', `[Mô phỏng] Đèn ${to} nháy 3 lần để nhận diện.`);
+      return;
+    }
+    if (op === 'sched') {
+      this.log('info', `[Mô phỏng] Đèn ${to} đã nhận lịch hẹn giờ.`);
+      return;
+    }
+    if (op === 'cfg') {
+      if (params.has('relay') && this.meshInfo) this.meshInfo.relay = Number(params.get('relay'));
+      if (params.has('irf') && this.meshInfo) this.meshInfo.irf = Number(params.get('irf'));
+      if (params.has('net') && this.meshInfo) this.meshInfo.net = Number(params.get('net'));
+      this.emitMesh();
+      return;
+    }
+    // op=light (gõ tay trong console)
+    this.meshLamps.forEach((lamp, id) => {
+      if (lamp.online !== 1 || !hits(lamp)) return;
+      const next = { ...lamp };
+      (['power', 'r', 'g', 'b', 'cw', 'bri'] as const).forEach((k) => {
+        if (params.has(k)) next[k] = Math.round(Number(params.get(k)));
+      });
+      this.meshLamps.set(id, next);
+      if (lamp.isGateway === 1) {
+        Object.assign(this.mockState, {
+          power: next.power,
+          r: next.r,
+          g: next.g,
+          b: next.b,
+          cw: next.cw,
+          bri: next.bri,
+        });
+        this.emitMockStatus();
+      }
+    });
+    this.emitMesh();
   }
 
   private connectMock() {
@@ -770,6 +1364,11 @@ export class BleService {
         this.onConnectionCallback?.('connected');
         this.log('info', '[Mô phỏng] Đã kết nối với Cito Smart Light ảo.');
 
+        if (this.mockLegacy) {
+          this.log('info', '[Mô phỏng] Firmware cũ - không có kênh MESH.');
+        } else {
+          this.setupMockMesh();
+        }
         this.emitMockStatus();
         if (this.onScheduleCallback) this.onScheduleCallback(this.mockSchedule);
         if (this.onWifiCallback) this.onWifiCallback(this.mockWifi);
@@ -795,6 +1394,7 @@ export class BleService {
     }
 
     setTimeout(() => {
+      this.resetMesh();
       this.onConnectionCallback?.('idle');
       this.log('info', '[Mô phỏng] Đã ngắt kết nối.');
     }, 300);
@@ -884,6 +1484,10 @@ export class BleService {
     this.log('rx', `RX: ${statusPayload}`);
     if (this.onStatusCallback) {
       this.onStatusCallback({ ...this.mockState });
+    }
+    if (this.meshSupported) {
+      this.syncMockGatewayLamp();
+      this.emitMesh();
     }
   }
 }
